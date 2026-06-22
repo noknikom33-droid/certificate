@@ -5,15 +5,32 @@
 const CFG = window.CERT_CONFIG || {};
 const API_URL = CFG.API_URL;
 const SAMPLE_NAME = CFG.SAMPLE_NAME || 'นายศิริพงษ์ ธิวรรณ';
+// แจ้ง index.html ว่าสคริปต์เริ่มทำงานแล้ว (ปิดตัวจับเวลาเตือน)
+window.__booted = true; if(window.__bootTimer) clearTimeout(window.__bootTimer);
 
 /* =================== API =================== */
+// เรียก API พร้อม timeout และแปลงเป็น JSON อย่างปลอดภัย
+// ถ้าพลาด จะ"คืน object error" แทนการ throw เพื่อไม่ให้หน้าค้างที่สปินเนอร์
+async function fetchJSON(url, opts={}, ms=25000){
+  const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort(), ms);
+  let text='';
+  try{
+    const r=await fetch(url,{...opts,signal:ctrl.signal,redirect:'follow'});
+    text=await r.text();
+  }catch(e){
+    if(e.name==='AbortError') throw new Error('หมดเวลาเชื่อมต่อ API (เครือข่ายช้า หรือ URL ไม่ถูกต้อง)');
+    throw new Error('เชื่อมต่อ API ไม่ได้ — ตรวจอินเทอร์เน็ต/ลิงก์ API_URL ในไฟล์ config.js');
+  }finally{ clearTimeout(t); }
+  try{ return JSON.parse(text); }
+  catch(e){ throw new Error('API ไม่ได้ส่งข้อมูล JSON กลับมา — มักเกิดเมื่อยังไม่ได้ตั้ง Deploy เป็น "Who has access = Anyone" หรือใช้ลิงก์ที่ไม่ใช่ /exec'); }
+}
 async function apiGet(action, params={}){
-  const qs = new URLSearchParams({action, ...params}).toString();
-  const r = await fetch(API_URL+'?'+qs); return r.json();
+  try{ const qs=new URLSearchParams({action,...params}).toString(); return await fetchJSON(API_URL+'?'+qs); }
+  catch(e){ return {ok:false, error:String(e.message||e)}; }
 }
 async function apiPost(action, data={}){
-  const r = await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...data})});
-  return r.json();
+  try{ return await fetchJSON(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...data})}); }
+  catch(e){ return {ok:false, error:String(e.message||e)}; }
 }
 async function uploadToDrive(dataURL, filename){
   const u = Session.get();
@@ -89,7 +106,6 @@ function renderCertInner(c){
 
 /* =================== ROUTER =================== */
 window.addEventListener('hashchange',router);
-window.addEventListener('load',router);
 function router(){
   if(!API_URL){ shell(errorBox('ยังไม่ได้ตั้งค่า API_URL ในไฟล์ assets/js/config.js')); return; }
   const hash=location.hash.replace(/^#/,'')||'/';
@@ -732,3 +748,8 @@ async function saveSettingsForm(){
   btn.disabled=false;btn.innerHTML='<i class="bi bi-save"></i> บันทึกการตั้งค่า';
   if(r&&r.ok){toast('บันทึกการตั้งค่าแล้ว');renderAdmin('settings');}else toast(r.error||'บันทึกไม่สำเร็จ',false);
 }
+
+/* =================== เริ่มทำงาน (ไม่รอ CDN) =================== */
+// app.js ถูกโหลดท้าย <body> อยู่แล้ว DOM จึงพร้อมใช้งาน เรียก router ได้ทันที
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', router);
+else router();
